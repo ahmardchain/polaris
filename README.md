@@ -1,5 +1,7 @@
 # polaris
 
+Live demo: https://ahmardchain.github.io/polaris/
+
 Other entry by same author: TBD
 
 Track: `agents`
@@ -17,7 +19,7 @@ npm test
 npm run dev
 ```
 
-Open http://localhost:5173. The page reads the contract from NEAR testnet. Scenario A and B cards link to the Sepolia and NEAR transactions below. The buy form refuses coverage the pool cannot pay and copies a `near` command. The page does not hold a key.
+Open http://localhost:5173/polaris/. The page reads the contract from NEAR testnet. Scenario A and B cards link to the Sepolia and NEAR transactions below. The buy form refuses coverage the pool cannot pay and copies a `near` command. The page does not hold a key.
 
 `web` tests: status labels and the pool-cap check. `npm test` there.
 
