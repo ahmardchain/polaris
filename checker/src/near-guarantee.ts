@@ -21,10 +21,13 @@ export interface GuaranteeClient extends GuaranteePort {
 
 export function createGuaranteeClient(input: {
   account: Account;
+  /** Submits delivery proofs. Defaults to `account` when no separate checker key is configured. */
+  proofAccount?: Account;
   provider: JsonRpcProvider;
   contractId: string;
 }): GuaranteeClient {
   const { account, provider, contractId } = input;
+  const proofAccount = input.proofAccount ?? account;
 
   async function premium(): Promise<bigint> {
     const config = await provider.callFunction(contractId, "get_config", {});
@@ -67,7 +70,7 @@ export function createGuaranteeClient(input: {
       };
     },
     async submitProof(id, txHash) {
-      const outcome = await account.callFunctionRaw({
+      const outcome = await proofAccount.callFunctionRaw({
         contractId,
         methodName: "submit_proof",
         args: { guarantee_id: id, tx_hash: txHash },

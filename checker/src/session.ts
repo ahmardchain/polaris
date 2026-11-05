@@ -1,4 +1,7 @@
 import "./env.js";
+import { Account } from "@near-js/accounts";
+import { KeyPair, type KeyPairString } from "@near-js/crypto";
+import { KeyPairSigner } from "@near-js/signers";
 import { requireSigner, loadConfig } from "../../spike/src/config.js";
 import { connectNear, deriveAndVerify, evmClients } from "../../spike/src/chain.js";
 import { createEvmPort } from "./evm-payment.js";
@@ -38,9 +41,16 @@ export async function openSession(): Promise<Session> {
   }
   const contractId =
     process.env.GUARANTEE_CONTRACT?.trim() || "guarantee.polaris-d1-z7npttup.testnet";
+  const checkerId = process.env.CHECKER_ACCOUNT?.trim();
+  const checkerKey = process.env.CHECKER_PRIVATE_KEY?.trim();
+  const proofAccount =
+    checkerId && checkerKey
+      ? new Account(checkerId, near.provider, new KeyPairSigner(KeyPair.fromString(checkerKey as KeyPairString)))
+      : near.account;
   return {
     guarantee: createGuaranteeClient({
       account: near.account,
+      proofAccount,
       provider: near.provider,
       contractId,
     }),

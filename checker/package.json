@@ -8,6 +8,7 @@
     "test": "node --import tsx --test src/*.test.ts",
     "fund-pool": "tsx src/fund-pool.ts",
     "demo": "tsx src/demo.ts",
+    "set-checker": "tsx src/set-checker.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
