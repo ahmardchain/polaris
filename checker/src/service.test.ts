@@ -143,11 +143,16 @@ describe("runGuaranteedPayment", () => {
       },
     };
 
+    let quotes = 0;
     const report = await runGuaranteedPayment({
       near: clock.near,
       evm,
       request: request(90_000),
       sleep: clock.sleep,
+      quotePayout: async () => {
+        quotes += 1;
+        return { claim: { ok: false, dry: true, message: "pair unavailable" }, example: { ok: true, dry: true, amountOutFormatted: "0.997398" } };
+      },
     });
 
     assert.equal(bumps, 0);
@@ -156,6 +161,8 @@ describe("runGuaranteedPayment", () => {
     assert.deepEqual(clock.proofs, []);
     assert.equal(report.underpriced?.hash, "0xstuck");
     assert.equal(report.replacement, null);
+    assert.equal(quotes, 1);
+    assert.equal(report.payoutQuote && (report.payoutQuote as { example: { amountOutFormatted: string } }).example.amountOutFormatted, "0.997398");
 
     const claimed = await claimIfStillOpen(clock.near, report.guaranteeId);
     assert.equal(claimed.claimed, true);

@@ -48,6 +48,8 @@ export function App() {
       </div>
       <h2>On-chain guarantees</h2>
       <GuaranteeTable rows={guarantees} />
+      <h2>Optional Base USDC payout</h2>
+      <QuotePanel />
       <h2>Buy a guarantee</h2>
       {config && pool ? <BuyForm config={config} pool={pool} /> : null}
     </main>
@@ -92,24 +94,27 @@ function DemoCard(props: { item: RecordedGuarantee; live: GuaranteeView | undefi
       </div>
       <p>{props.item.title}</p>
       <p className="meta">{props.item.note}</p>
-      <ul>
-        <li><a href={nearTx(props.item.buyTx)}>Buy on NEAR</a>. Pending {props.item.pendingMs} ms. Underpriced MPC {props.item.mpcUnderpricedMs} ms.</li>
-        <li><a href={sepoliaTx(props.item.underpricedTx)}>Underpriced transaction on Sepolia</a></li>
-        {props.item.replacementTx ? (
-          <li>
-            <a href={sepoliaTx(props.item.replacementTx)}>Fee-bumped replacement on Sepolia</a>
-            {props.item.mpcReplacementMs !== null ? `. Replacement MPC ${props.item.mpcReplacementMs} ms.` : ""}
-          </li>
-        ) : null}
-        {props.item.proofTx ? <li><a href={nearTx(props.item.proofTx)}>submit_proof on NEAR</a></li> : null}
-        {props.item.claimTx ? <li><a href={nearTx(props.item.claimTx)}>claim on NEAR</a></li> : null}
+      <ol className="timeline">
+        <li><a href={nearTx(props.item.buyTx)}>Buy</a>. Pending {props.item.pendingMs} ms. Underpriced MPC {props.item.mpcUnderpricedMs} ms.</li>
+        <li><a href={sepoliaTx(props.item.underpricedTx)}>Stuck underpriced transaction</a></li>
+        <li className={props.item.replacementTx ? "" : "skipped"}>
+          {props.item.replacementTx ? (
+            <a href={sepoliaTx(props.item.replacementTx)}>Fee-bumped replacement</a>
+          ) : (
+            "No fee bump. The deadline would have passed first."
+          )}
+          {props.item.mpcReplacementMs !== null ? ` MPC ${props.item.mpcReplacementMs} ms.` : ""}
+        </li>
+        <li className={props.item.proofTx ? "" : "skipped"}>
+          {props.item.proofTx ? <a href={nearTx(props.item.proofTx)}>submit_proof</a> : "No proof submitted."}
+        </li>
+        <li className={props.item.claimTx ? "" : "skipped"}>
+          {props.item.claimTx ? <a href={nearTx(props.item.claimTx)}>claim</a> : "No claim. Delivery was proved."}
+        </li>
         {props.item.nonceRecoveryTx ? (
-          <li><a href={sepoliaTx(props.item.nonceRecoveryTx)}>Nonce recovery on Sepolia</a>. Not a proof.</li>
+          <li><a href={sepoliaTx(props.item.nonceRecoveryTx)}>Nonce recovery</a>. Not a proof.</li>
         ) : null}
-        {props.live?.proofTxHash ? (
-          <li>On-chain proof <a href={sepoliaTx(props.live.proofTxHash)}>{props.live.proofTxHash}</a></li>
-        ) : null}
-      </ul>
+      </ol>
     </article>
   );
 }
@@ -238,6 +243,88 @@ function BuyForm(props: { config: ConfigView; pool: PoolView }) {
       </p>
     </form>
   );
+}
+
+function QuotePanel() {
+  const [text, setText] = useState("Requesting a dry 1-Click quote.");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadQuotes(controller.signal).then(setText).catch((error: unknown) => {
+      setText(error instanceof Error ? error.message : String(error));
+    });
+    return () => controller.abort();
+  }, []);
+
+  return (
+    <section className="card">
+      <p>
+        A claim pays NEAR on testnet. NEAR Intents has no testnet, so this quote uses <span className="mono">dry: true</span>.
+        No deposit address is requested and no swap is sent.
+      </p>
+      <pre>{text}</pre>
+    </section>
+  );
+}
+
+async function loadQuotes(signal: AbortSignal): Promise<string> {
+  const claim = await postQuote({
+    originAsset: "nep141:wrap.near",
+    destinationAsset: "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+    amount: "200000000000000000000",
+    recipient: "0x6Fed7c2dfCB2a08d36Cd1969c3107C0Be48BEDc6",
+    refundTo: "polaris-d1-z7npttup.testnet",
+  }, signal);
+  const lines = [`wNEAR to Base USDC for the 0.0002 NEAR claim: ${summarize(claim)}`];
+  if (!claim.quote) {
+    const example = await postQuote({
+      originAsset: "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+      destinationAsset: "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      amount: "1000000",
+      recipient: "0x6Fed7c2dfCB2a08d36Cd1969c3107C0Be48BEDc6",
+      refundTo: "0x6Fed7c2dfCB2a08d36Cd1969c3107C0Be48BEDc6",
+    }, signal);
+    lines.push(`1 ETH USDC to Base USDC, the dry route the API currently prices: ${summarize(example)}`);
+  }
+  lines.push("Mainnet tiny path: same request with dry:false, then send the quoted origin amount to depositAddress. Not run here.");
+  return lines.join("\n");
+}
+
+async function postQuote(input: {
+  originAsset: string;
+  destinationAsset: string;
+  amount: string;
+  recipient: string;
+  refundTo: string;
+}, signal: AbortSignal): Promise<{ message?: string; quote?: { amountOutFormatted?: string; amountOutUsd?: string; timeEstimate?: number; depositAddress?: string | null } }> {
+  const response = await fetch("https://1click.chaindefuser.com/v0/quote", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    signal,
+    body: JSON.stringify({
+      dry: true,
+      swapType: "EXACT_INPUT",
+      slippageTolerance: 100,
+      originAsset: input.originAsset,
+      depositType: "ORIGIN_CHAIN",
+      destinationAsset: input.destinationAsset,
+      amount: input.amount,
+      recipient: input.recipient,
+      recipientType: "DESTINATION_CHAIN",
+      refundTo: input.refundTo,
+      refundType: "ORIGIN_CHAIN",
+      deadline: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    }),
+  });
+  return response.json() as Promise<{ message?: string; quote?: { amountOutFormatted?: string; amountOutUsd?: string; timeEstimate?: number; depositAddress?: string | null } }>;
+}
+
+function summarize(body: { message?: string; quote?: { amountOutFormatted?: string; amountOutUsd?: string; timeEstimate?: number; depositAddress?: string | null } }): string {
+  if (!body.quote) {
+    return body.message ?? "no quote";
+  }
+  const deposit = body.quote.depositAddress ? body.quote.depositAddress : "none (dry)";
+  return `${body.quote.amountOutFormatted} USDC, about $${body.quote.amountOutUsd}, eta ${body.quote.timeEstimate}s, deposit ${deposit}`;
 }
 
 function short(value: string): string {

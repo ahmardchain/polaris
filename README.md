@@ -2,9 +2,11 @@
 
 Other entry by same author: TBD
 
+Track: `agents`
+
 Do this to see a NEAR account buy a guarantee for a 1 wei Ethereum Sepolia payment, then either prove delivery after a same-nonce fee bump or claim a refund when the deadline passes.
 
-The guarantee contract is `guarantee.polaris-d1-z7npttup.testnet`. The owner is `polaris-d1-z7npttup.testnet`. The checker is `checker.polaris-d1-z7npttup.testnet`. The checker is a normal NEAR account set with `set_checker`. It is trusted. It is not a TEE, and the contract does not verify the Sepolia transaction. The premium is a flat 0.1 NEAR. USDC premiums and NEAR Intents payouts are not implemented.
+The guarantee contract is `guarantee.polaris-d1-z7npttup.testnet`. The owner is `polaris-d1-z7npttup.testnet`. The checker is `checker.polaris-d1-z7npttup.testnet`. The checker is a normal NEAR account set with `set_checker`. It is trusted. It is not a TEE, and the contract does not verify the Sepolia transaction. The premium is a flat 0.1 NEAR. A claim pays NEAR. The page also requests a dry NEAR Intents quote for an optional USDC-on-Base delivery of that claim. No live swap was sent. The current wasm, including `get_guarantees` and the validation events, was deployed in `2zcgJGeQWWZcUMS4VpmZGeP1A8oGX5aNkmrEhNKj1Hwc` without calling `new` again.
 
 ## See the guarantees
 
@@ -27,7 +29,7 @@ cd ../spike && npm test
 cd ../checker && npm test
 ```
 
-Contract tests: 10 passed (delivered, timeout refund, late proof, cap, double claim, wrong checker, early claim, owner-only `set_checker`). Spike tests: fee bump, fee cap, same nonce. Checker tests: 12 passed, with mocked NEAR and Sepolia.
+Contract tests: 17 passed (delivered, timeout refund, late proof, cap, double claim, wrong checker, early claim, owner-only `set_checker`, chain and hash validation, 30-day deadline, empty fund, surplus withdraw, `get_guarantees`, buy event). Spike tests: 18 passed (fee bump, fee cap, same nonce). Checker tests: 16 passed, with mocked NEAR and Sepolia plus dry 1-Click quote parsing. `cd checker && npm run quote` hits the live 1-Click API with `dry: true`.
 
 ## Reproduce scenarios A and B
 
@@ -79,10 +81,24 @@ Guarantee 4. Underpriced nonce 4 stayed pending for 84141 ms (MPC 15605 ms). No 
 | claim | [`5onvRo1TirhoLTW9NY9adyyGqXxxMame9QdkMkSoEcfi`](https://testnet.nearblocks.io/txns/5onvRo1TirhoLTW9NY9adyyGqXxxMame9QdkMkSoEcfi) |
 | Nonce recovery only, not a proof | [`0xbee7cb84d992c61e5379dd60dad9ab488e35f0c9b385774cc45b201a093908ab`](https://sepolia.etherscan.io/tx/0xbee7cb84d992c61e5379dd60dad9ab488e35f0c9b385774cc45b201a093908ab) |
 
+## Optional Base USDC payout
+
+A claim still pays NEAR on testnet. To preview sending that payout as USDC on Base, ask NEAR Intents 1-Click for a dry quote. `dry: true` returns amounts and does not create a `depositAddress`. There is no Intents testnet. This repo did not send a live swap.
+
+```bash
+cd checker
+npm run quote
+```
+
+On 5 Nov 2026 `npm run quote` for 0.0002 wNEAR to Base USDC returned `Quoting for this pair is not available` (correlation `380e5cc6-58a3-46dc-b94c-66cb7a0a3122`). The same call for 1 USDC on Ethereum to USDC on Base returned `0.997497` USDC, about $0.997, 47 seconds, deposit address null because `dry` was true (correlation `881b37ad-d537-4225-b5ff-af6ec3aa4c20`). The web page shows both.
+
+A mainnet tiny path, not run here: repeat that request with `"dry": false` and `INTENTS_ALLOW_LIVE=true`, then transfer the quoted origin amount to `depositAddress` before `deadline`. Use an amount you can afford to lose. Do not point `refundTo` at an address on the wrong chain.
+
 ## Limits
 
 - The checker is trusted. Anyone who has `checker.polaris-d1-z7npttup.testnet` can call `submit_proof`. The contract does not check the Sepolia receipt.
-- The premium is NEAR. The pool pays NEAR. There is no USDC and no NEAR Intents payout.
+- The premium is NEAR. A testnet claim pays NEAR. The Base USDC path is a dry 1-Click quote only. wNEAR to Base USDC was not quotable when checked; 1 ETH USDC to Base USDC was. No `dry: false` swap was sent.
 - PublicNode sometimes returns `transaction underpriced` for a 3 wei `maxFeePerGas` and accepts a retry of the same signed transaction.
 - A frontend demo video script is `docs/demo.md`. The video is not recorded here.
 - There is no separate product UI beyond `web/`.
+- The repo is public at https://github.com/ahmardchain/polaris. The license is MIT, in `LICENSE`.

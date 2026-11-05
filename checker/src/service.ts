@@ -78,6 +78,8 @@ export interface RunReport {
   pendingForMs: number;
   sawPending: boolean;
   confirmations: number | null;
+  /** Dry 1-Click quote for an optional USDC-on-Base delivery of a NEAR claim. Null when the payment was proved. */
+  payoutQuote: unknown;
 }
 
 export async function runGuaranteedPayment(input: {
@@ -86,6 +88,7 @@ export async function runGuaranteedPayment(input: {
   request: RunRequest;
   sleep: (ms: number) => Promise<void>;
   onDecision?: (decision: { type: string; reason?: string }, nowMs: number) => void;
+  quotePayout?: () => Promise<unknown>;
 }): Promise<RunReport> {
   const bought = await input.near.buy({
     destinationChain: input.request.destinationChain,
@@ -201,12 +204,12 @@ export async function runGuaranteedPayment(input: {
     };
   }
 
-  function finish(
+  async function finish(
     outcome: RunReport["outcome"],
     reason: string | null,
     proofTxHash: string | null,
     provedHash: string | null = null,
-  ): RunReport {
+  ): Promise<RunReport> {
     return {
       guaranteeId: bought.id,
       buyTxHash: bought.nearTxHash,
@@ -221,7 +224,19 @@ export async function runGuaranteedPayment(input: {
       pendingForMs,
       sawPending,
       confirmations,
+      payoutQuote: outcome === "left_for_claim" ? await loadQuote() : null,
     };
+  }
+
+  async function loadQuote(): Promise<unknown> {
+    if (!input.quotePayout) {
+      return null;
+    }
+    try {
+      return await input.quotePayout();
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
   }
 }
 

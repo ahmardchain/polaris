@@ -47,6 +47,12 @@ pub struct PoolView {
 }
 
 #[near(serializers = [json])]
+pub struct GuaranteeEntry {
+    pub id: u64,
+    pub guarantee: Guarantee,
+}
+
+#[near(serializers = [json])]
 pub struct ConfigView {
     pub owner: AccountId,
     pub checker: AccountId,
@@ -131,14 +137,16 @@ impl Contract {
         coverage: U128,
         deadline: U64,
     ) -> u64 {
-        require!(!destination_chain.is_empty(), "destination chain required");
-        require!(destination_chain.len() <= 64, "destination chain too long");
-        require!(!recipient.is_empty(), "recipient required");
-        require!(recipient.len() <= 128, "recipient too long");
+        let destination_chain = clean_chain(destination_chain);
+        let recipient = clean_recipient(recipient);
         require!(amount.0 > 0, "amount must be positive");
         require!(coverage.0 > 0, "coverage must be positive");
         let now = env::block_timestamp();
         require!(deadline.0 > now, "deadline must be in the future");
+        require!(
+            deadline.0 - now <= MAX_DEADLINE_NS,
+            "deadline must be within 30 days"
+        );
 
         let deposit = env::attached_deposit().as_yoctonear();
         require!(
@@ -163,10 +171,11 @@ impl Contract {
         self.next_id = self.next_id.checked_add(1).expect("id overflow");
         self.pool_balance = new_pool;
         self.outstanding_coverage = new_outstanding;
+        let agent = env::predecessor_account_id();
         self.guarantees.insert(
             id,
             Guarantee {
-                agent: env::predecessor_account_id(),
+                agent: agent.clone(),
                 destination_chain,
                 recipient,
                 amount,
@@ -175,6 +184,13 @@ impl Contract {
                 status: GuaranteeStatus::Open,
                 proof_tx_hash: None,
             },
+        );
+        emit(
+            "buy_guarantee",
+            &format!(
+                "{{\"id\":{id},\"agent\":\"{agent}\",\"coverage\":\"{}\"}}",
+                coverage.0
+            ),
         );
         id
     }
@@ -186,8 +202,7 @@ impl Contract {
             env::predecessor_account_id() == self.checker,
             "only the checker"
         );
-        require!(!tx_hash.is_empty(), "tx hash required");
-        require!(tx_hash.len() <= 80, "tx hash too long");
+        let tx_hash = clean_tx_hash(tx_hash);
 
         let guarantee = self
             .guarantees
@@ -205,8 +220,12 @@ impl Contract {
 
         let coverage = guarantee.coverage.0;
         guarantee.status = GuaranteeStatus::Delivered;
-        guarantee.proof_tx_hash = Some(tx_hash);
+        guarantee.proof_tx_hash = Some(tx_hash.clone());
         self.outstanding_coverage -= coverage;
+        emit(
+            "submit_proof",
+            &format!("{{\"id\":{guarantee_id},\"tx_hash\":\"{tx_hash}\"}}"),
+        );
     }
 
     /// After the deadline, pay `coverage` to the agent unless delivery was proved.
@@ -231,7 +250,29 @@ impl Contract {
         guarantee.status = GuaranteeStatus::Claimed;
         self.outstanding_coverage -= coverage;
         self.pool_balance -= coverage;
+        emit(
+            "claim",
+            &format!("{{\"id\":{guarantee_id},\"agent\":\"{agent}\",\"coverage\":\"{coverage}\"}}"),
+        );
         Promise::new(agent).transfer(NearToken::from_yoctonear(coverage))
+    }
+
+    /// Guarantees in id order. `from_index` is an offset, not an id. `limit` is 1..=50.
+    pub fn get_guarantees(&self, from_index: u64, limit: u64) -> Vec<GuaranteeEntry> {
+        require!(limit > 0 && limit <= 50, "limit must be 1..=50");
+        self.guarantees
+            .iter()
+            .skip(from_index as usize)
+            .take(limit as usize)
+            .map(|(id, guarantee)| GuaranteeEntry {
+                id: *id,
+                guarantee: guarantee.clone(),
+            })
+            .collect()
+    }
+
+    pub fn get_next_id(&self) -> u64 {
+        self.next_id
     }
 
     pub fn get_guarantee(&self, guarantee_id: u64) -> Option<Guarantee> {
@@ -256,6 +297,55 @@ impl Contract {
     }
 }
 
+const MAX_DEADLINE_NS: u64 = 30 * 24 * 60 * 60 * 1_000_000_000;
+
+fn emit(event: &str, data: &str) {
+    env::log_str(&format!(
+        "EVENT_JSON:{{\"standard\":\"polaris-guarantee\",\"version\":\"1.0.0\",\"event\":\"{event}\",\"data\":[{data}]}}"
+    ));
+}
+
+fn clean_chain(value: String) -> String {
+    let value = value.trim().to_string();
+    require!(!value.is_empty(), "destination chain required");
+    require!(value.len() <= 64, "destination chain too long");
+    require!(
+        value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
+        "destination chain must be lowercase letters, digits, or hyphens"
+    );
+    value
+}
+
+fn clean_recipient(value: String) -> String {
+    let value = value.trim().to_string();
+    require!(!value.is_empty(), "recipient required");
+    require!(value.len() <= 128, "recipient too long");
+    require!(
+        !value.chars().any(|c| c.is_whitespace()),
+        "recipient must not contain whitespace"
+    );
+    value
+}
+
+fn clean_tx_hash(value: String) -> String {
+    let value = value.trim().to_string();
+    require!(!value.is_empty(), "tx hash required");
+    require!(value.len() <= 80, "tx hash too long");
+    require!(
+        !value.chars().any(|c| c.is_whitespace()),
+        "tx hash must not contain whitespace"
+    );
+    if let Some(hex) = value.strip_prefix("0x") {
+        require!(
+            hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()),
+            "evm tx hash must be 0x plus 64 hex characters"
+        );
+    }
+    value
+}
+
 impl Contract {
     fn assert_owner(&self) {
         require!(
@@ -271,6 +361,7 @@ mod tests {
     use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::{testing_env, NearToken};
 
+    const TX: &str = "0x4546eed3b02239a3bea9646ea3ddf59b8b82787d726effe92662c8bd67e5ba9e";
     const YOCTO: u128 = 1_000_000_000_000_000_000_000_000;
     const PREMIUM: u128 = YOCTO;
     const COVERAGE: u128 = 10 * YOCTO;
@@ -321,11 +412,11 @@ mod tests {
         let id = buy(&mut contract, "agent.testnet", COVERAGE, deadline);
 
         context("checker.testnet", 0, NOW + 1_000);
-        contract.submit_proof(id, "0xabc".to_string());
+        contract.submit_proof(id, TX.to_string());
 
         let guarantee = contract.get_guarantee(id).unwrap();
         assert_eq!(guarantee.status, GuaranteeStatus::Delivered);
-        assert_eq!(guarantee.proof_tx_hash.as_deref(), Some("0xabc"));
+        assert_eq!(guarantee.proof_tx_hash.as_deref(), Some(TX));
         assert_eq!(guarantee.agent.as_str(), "agent.testnet");
         let pool = contract.get_pool();
         assert_eq!(pool.outstanding_coverage.0, 0);
@@ -371,7 +462,7 @@ mod tests {
         let deadline = NOW + 60_000_000_000;
         let id = buy(&mut contract, "agent.testnet", COVERAGE, deadline);
         context("checker.testnet", 0, deadline);
-        contract.submit_proof(id, "0xlate".to_string());
+        contract.submit_proof(id, TX.to_string());
     }
 
     #[test]
@@ -471,7 +562,7 @@ mod tests {
             NOW + 60_000_000_000,
         );
         context("new-checker.testnet", 0, NOW + 1);
-        contract.submit_proof(id, "0xnew".to_string());
+        contract.submit_proof(id, TX.to_string());
         assert_eq!(
             contract.get_guarantee(id).unwrap().status,
             GuaranteeStatus::Delivered
@@ -484,5 +575,98 @@ mod tests {
         let mut contract = init();
         context("agent.testnet", 0, NOW);
         contract.set_checker("other.testnet".parse().unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected = "destination chain must be lowercase")]
+    fn uppercase_chain_is_rejected() {
+        let mut contract = init();
+        fund(&mut contract, yocto(20));
+        context("agent.testnet", PREMIUM, NOW);
+        contract.buy_guarantee(
+            "Ethereum".to_string(),
+            "0xabc".to_string(),
+            U128(1),
+            U128(COVERAGE),
+            U64(NOW + 60_000_000_000),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "evm tx hash must be 0x plus 64 hex characters")]
+    fn short_evm_hash_is_rejected() {
+        let mut contract = init();
+        fund(&mut contract, yocto(20));
+        let id = buy(
+            &mut contract,
+            "agent.testnet",
+            COVERAGE,
+            NOW + 60_000_000_000,
+        );
+        context("checker.testnet", 0, NOW + 1);
+        contract.submit_proof(id, "0xabc".to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "deadline must be within 30 days")]
+    fn distant_deadline_is_rejected() {
+        let mut contract = init();
+        fund(&mut contract, yocto(20));
+        buy(
+            &mut contract,
+            "agent.testnet",
+            COVERAGE,
+            NOW + 31 * 24 * 60 * 60 * 1_000_000_000,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "attach NEAR to fund the pool")]
+    fn empty_fund_is_rejected() {
+        let mut contract = init();
+        context("owner.testnet", 0, NOW);
+        contract.fund_pool();
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot withdraw outstanding coverage")]
+    fn surplus_withdraw_cannot_touch_open_coverage() {
+        let mut contract = init();
+        fund(&mut contract, yocto(20));
+        buy(
+            &mut contract,
+            "agent.testnet",
+            COVERAGE,
+            NOW + 60_000_000_000,
+        );
+        context("owner.testnet", 0, NOW);
+        let _ = contract.withdraw_surplus(U128(yocto(20)));
+    }
+
+    #[test]
+    fn list_guarantees_and_buy_event() {
+        let mut contract = init();
+        fund(&mut contract, yocto(20));
+        let id = buy(
+            &mut contract,
+            "agent.testnet",
+            COVERAGE,
+            NOW + 60_000_000_000,
+        );
+        let page = contract.get_guarantees(0, 10);
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].id, id);
+        assert_eq!(page[0].guarantee.status, GuaranteeStatus::Open);
+        assert_eq!(contract.get_next_id(), id + 1);
+        assert!(contract.get_guarantees(1, 10).is_empty());
+        let logs = near_sdk::test_utils::get_logs();
+        assert!(logs.iter().any(|line| line.contains("buy_guarantee")));
+    }
+
+    #[test]
+    #[should_panic(expected = "limit must be 1..=50")]
+    fn list_limit_zero_is_rejected() {
+        let contract = init();
+        contract.get_guarantees(0, 0);
     }
 }

@@ -9,6 +9,7 @@
     "fund-pool": "tsx src/fund-pool.ts",
     "demo": "tsx src/demo.ts",
     "set-checker": "tsx src/set-checker.ts",
+    "quote": "tsx src/quote.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

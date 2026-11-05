@@ -1,4 +1,5 @@
 import "./env.js";
+import { quoteClaimPayout } from "./intents.js";
 import { openSession, type Session } from "./session.js";
 import { claimIfStillOpen, runGuaranteedPayment, type RunReport } from "./service.js";
 
@@ -54,6 +55,7 @@ async function scenarioRescued(session: Session): Promise<RunReport> {
     request: common(session, deadlineNs),
     sleep,
     onDecision: (decision, at) => console.log(`A ${at} ${decision.type} ${decision.reason ?? ""}`),
+    quotePayout: () => payoutQuote(session),
   });
   printReport("A", report);
   if (report.outcome !== "proved") {
@@ -72,6 +74,7 @@ async function scenarioTimeout(session: Session): Promise<unknown> {
     request: common(session, deadlineNs),
     sleep,
     onDecision: (decision, at) => console.log(`B ${at} ${decision.type} ${decision.reason ?? ""}`),
+    quotePayout: () => payoutQuote(session),
   });
   printReport("B", report);
   if (report.outcome !== "left_for_claim") {
@@ -166,6 +169,14 @@ function printReport(label: string, report: RunReport): void {
     console.log(`${label} https://testnet.nearblocks.io/txns/${report.proofTxHash}`);
   }
   console.log(`${label} outcome ${report.outcome} pendingForMs ${report.pendingForMs} sawPending ${report.sawPending}`);
+}
+
+function payoutQuote(session: Session) {
+  return quoteClaimPayout({
+    coverageYocto: COVERAGE.toString(),
+    recipient: session.paymentTo,
+    refundTo: process.env.NEAR_ACCOUNT_ID ?? "polaris-d1-z7npttup.testnet",
+  });
 }
 
 function sleep(ms: number): Promise<void> {

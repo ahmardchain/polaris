@@ -108,7 +108,10 @@ if (!(await accountExists(contractId))) {
   console.log(`created: ${outcome.transaction.hash}`);
 } else {
   console.log(`Deploying to existing account ${contractId}.`);
-  const outcome = await owner.signAndSendTransaction({
+  // The subaccount holds its own full-access key (the same key added at creation).
+  // The parent account cannot deploy code onto it.
+  const contractAccount = new Account(contractId, provider, signer);
+  const outcome = await contractAccount.signAndSendTransaction({
     receiverId: contractId,
     actions: [actionCreators.deployContract(wasm)],
     waitUntil: "FINAL",

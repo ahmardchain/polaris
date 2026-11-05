@@ -93,6 +93,45 @@ export async function loadChain(): Promise<{
     }>("get_pool", {}),
   ]);
 
+  try {
+    const listed = await view<Array<{ id: number; guarantee: {
+      agent: string;
+      destination_chain: string;
+      recipient: string;
+      amount: string;
+      coverage: string;
+      deadline: string;
+      status: unknown;
+      proof_tx_hash: string | null;
+    } }>>("get_guarantees", { from_index: 0, limit: 50 });
+    return {
+      config: {
+        owner: configRaw.owner,
+        checker: configRaw.checker,
+        premium: asBigint(configRaw.premium),
+      },
+      pool: {
+        poolBalance: asBigint(poolRaw.pool_balance),
+        outstandingCoverage: asBigint(poolRaw.outstanding_coverage),
+        freeCoverage: asBigint(poolRaw.free_coverage),
+        premium: asBigint(poolRaw.premium),
+      },
+      guarantees: listed.map((entry) => ({
+        id: entry.id,
+        agent: entry.guarantee.agent,
+        destinationChain: entry.guarantee.destination_chain,
+        recipient: entry.guarantee.recipient,
+        amount: entry.guarantee.amount,
+        coverage: asBigint(entry.guarantee.coverage),
+        deadline: asBigint(entry.guarantee.deadline),
+        status: asStatus(entry.guarantee.status),
+        proofTxHash: entry.guarantee.proof_tx_hash,
+      })),
+    };
+  } catch {
+    // The deployed contract may predate get_guarantees. Fall through to per-id reads.
+  }
+
   const rawRows = await Promise.all(
     Array.from({ length: 8 }, (_, index) =>
       view<{
