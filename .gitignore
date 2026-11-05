@@ -1,0 +1,6 @@
+.env
+.env.local
+spike/node_modules/
+spike/dist/
+*.log
+.DS_Store

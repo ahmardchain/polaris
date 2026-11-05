@@ -1,0 +1,31 @@
+{
+  "name": "polaris-day1-spike",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Day-1 risk spike: NEAR Chain Signatures derived Base Sepolia address, stuck underpriced EIP-1559 payment, same-nonce replacement under a fee cap.",
+  "scripts": {
+    "test": "node --import tsx --test src/*.test.ts",
+    "dry-run": "tsx src/dry-run.ts",
+    "spike": "tsx src/spike.ts",
+    "probe:ingress": "tsx src/probe-ingress.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@near-js/accounts": "^2.5.1",
+    "@near-js/crypto": "^2.5.1",
+    "@near-js/providers": "^2.5.1",
+    "@near-js/signers": "^2.5.1",
+    "chainsig.js": "^1.1.16",
+    "dotenv": "^18.0.9",
+    "viem": "^2.57.16"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
