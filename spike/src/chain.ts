@@ -17,7 +17,6 @@ import {
   type Hash,
   type Hex,
 } from "viem";
-import { baseSepolia } from "viem/chains";
 import type { SpikeConfig } from "./config.js";
 import { classifyBroadcastError, type BroadcastFailure } from "./errors.js";
 import type { UnsignedPayment } from "./plan.js";
@@ -42,25 +41,25 @@ type MpcSignerAccount = Parameters<
   InstanceType<typeof contracts.ChainSignatureContract>["sign"]
 >[0]["signerAccount"];
 
-export function baseClients(config: SpikeConfig) {
+export function evmClients(config: SpikeConfig) {
   const readClient = createPublicClient({
-    chain: baseSepolia,
-    transport: http(config.baseRpcUrl),
+    chain: config.chain.viemChain,
+    transport: http(config.rpcUrl),
   });
   const sequencerClient = createPublicClient({
-    chain: baseSepolia,
-    transport: http(config.baseSequencerUrl),
+    chain: config.chain.viemChain,
+    transport: http(config.submitUrl),
   });
   return { readClient, sequencerClient };
 }
 
 /** Inferred viem client. A `PublicClient` annotation clashes with the viem types bundled by chainsig.js. */
-export type BaseClient = ReturnType<typeof baseClients>["readClient"];
+export type BaseClient = ReturnType<typeof evmClients>["readClient"];
 
 export async function readBaseFee(client: BaseClient): Promise<bigint> {
   const block = await client.getBlock({ blockTag: "latest" });
   if (block.baseFeePerGas == null) {
-    throw new Error("Base Sepolia block has no baseFeePerGas");
+    throw new Error("Latest block has no baseFeePerGas");
   }
   return block.baseFeePerGas;
 }

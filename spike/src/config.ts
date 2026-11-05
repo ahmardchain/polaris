@@ -1,9 +1,7 @@
 import { getAddress, isAddress, type Address } from "viem";
+import { type EvmChainProfile, resolveEvmChain } from "./chains.js";
 import {
-  DEFAULT_BASE_RPC_URL,
-  DEFAULT_BASE_SEQUENCER_URL,
   DEFAULT_DERIVATION_PATH,
-  DEFAULT_FEE_CAP_WEI,
   DEFAULT_MPC_CONTRACT_ID,
   DEFAULT_MPC_WAIT_MS,
   DEFAULT_NEAR_RPC_URL,
@@ -12,7 +10,6 @@ import {
   DEFAULT_RECEIPT_WAIT_MS,
   DEFAULT_REPLACEMENT_BUMP_BPS,
   DEFAULT_STUCK_POLL_MS,
-  DEFAULT_STUCK_WAIT_MS,
 } from "./constants.js";
 
 export interface SpikeConfig {
@@ -21,8 +18,9 @@ export interface SpikeConfig {
   nearRpcUrl: string;
   mpcContractId: string;
   derivationPath: string;
-  baseRpcUrl: string;
-  baseSequencerUrl: string;
+  chain: EvmChainProfile;
+  rpcUrl: string;
+  submitUrl: string;
   paymentTo: Address;
   paymentWei: bigint;
   feeCapWei: bigint;
@@ -60,11 +58,20 @@ function envInt(name: string, fallback: number): number {
   return Number(raw);
 }
 
+function optionalEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value && value.length > 0 ? value : undefined;
+}
+
 export function loadConfig(): SpikeConfig {
   const paymentTo = envString("PAYMENT_TO", DEFAULT_PAYMENT_TO);
   if (!isAddress(paymentTo)) {
     throw new Error(`PAYMENT_TO is not an EVM address: ${paymentTo}`);
   }
+  const chain = resolveEvmChain(envString("EVM_CHAIN", "base-sepolia"));
+  const legacyRpc = chain.key === "base-sepolia" ? optionalEnv("BASE_SEPOLIA_RPC_URL") : undefined;
+  const legacySubmit =
+    chain.key === "base-sepolia" ? optionalEnv("BASE_SEPOLIA_SEQUENCER_URL") : undefined;
   const nearPrivateKey = process.env.NEAR_PRIVATE_KEY?.trim();
   return {
     nearAccountId: process.env.NEAR_ACCOUNT_ID?.trim() || undefined,
@@ -72,13 +79,14 @@ export function loadConfig(): SpikeConfig {
     nearRpcUrl: envString("NEAR_RPC_URL", DEFAULT_NEAR_RPC_URL),
     mpcContractId: envString("MPC_CONTRACT_ID", DEFAULT_MPC_CONTRACT_ID),
     derivationPath: envString("DERIVATION_PATH", DEFAULT_DERIVATION_PATH),
-    baseRpcUrl: envString("BASE_SEPOLIA_RPC_URL", DEFAULT_BASE_RPC_URL),
-    baseSequencerUrl: envString("BASE_SEPOLIA_SEQUENCER_URL", DEFAULT_BASE_SEQUENCER_URL),
+    chain,
+    rpcUrl: optionalEnv("EVM_RPC_URL") ?? legacyRpc ?? chain.defaultRpcUrl,
+    submitUrl: optionalEnv("EVM_SUBMIT_URL") ?? legacySubmit ?? chain.defaultSubmitUrl,
     paymentTo: getAddress(paymentTo),
     paymentWei: envBigint("PAYMENT_WEI", DEFAULT_PAYMENT_WEI),
-    feeCapWei: envBigint("FEE_CAP_WEI", DEFAULT_FEE_CAP_WEI),
+    feeCapWei: envBigint("FEE_CAP_WEI", chain.defaultFeeCapWei),
     bumpBps: envBigint("REPLACEMENT_BUMP_BPS", BigInt(DEFAULT_REPLACEMENT_BUMP_BPS)),
-    stuckWaitMs: envInt("STUCK_WAIT_MS", DEFAULT_STUCK_WAIT_MS),
+    stuckWaitMs: envInt("STUCK_WAIT_MS", chain.defaultStuckWaitMs),
     stuckPollMs: envInt("STUCK_POLL_MS", DEFAULT_STUCK_POLL_MS),
     receiptWaitMs: envInt("RECEIPT_WAIT_MS", DEFAULT_RECEIPT_WAIT_MS),
     mpcWaitMs: envInt("MPC_WAIT_MS", DEFAULT_MPC_WAIT_MS),

@@ -1,5 +1,5 @@
 import type { Address } from "viem";
-import { BASE_SEPOLIA_CHAIN_ID, TRANSFER_GAS } from "./constants.js";
+import { TRANSFER_GAS } from "./constants.js";
 import { replacementFees, underpricedFees, type GasFees } from "./fees.js";
 
 export interface UnsignedPayment {
@@ -23,6 +23,8 @@ export interface PaymentPlan {
 }
 
 export function buildPaymentPlan(input: {
+  chainId: number;
+  minBaseFeeWei: bigint;
   nonce: number;
   baseFee: bigint;
   feeCapWei: bigint;
@@ -32,10 +34,13 @@ export function buildPaymentPlan(input: {
   bumpBps?: bigint;
   suggestedPriorityFee?: bigint;
 }): PaymentPlan {
+  if (!Number.isInteger(input.chainId) || input.chainId <= 0) {
+    throw new Error(`chainId must be a positive integer, got ${input.chainId}`);
+  }
   if (!Number.isInteger(input.nonce) || input.nonce < 0) {
     throw new Error(`nonce must be a non-negative integer, got ${input.nonce}`);
   }
-  const low = underpricedFees(input.baseFee);
+  const low = underpricedFees(input.baseFee, input.minBaseFeeWei);
   const high = replacementFees({
     baseFee: input.baseFee,
     stuck: low,
@@ -44,7 +49,7 @@ export function buildPaymentPlan(input: {
     suggestedPriorityFee: input.suggestedPriorityFee,
   });
   const shared = {
-    chainId: BASE_SEPOLIA_CHAIN_ID,
+    chainId: input.chainId,
     nonce: input.nonce,
     gas: input.gas ?? TRANSFER_GAS,
     to: input.to,

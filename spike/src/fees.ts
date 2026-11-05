@@ -1,6 +1,6 @@
 import {
-  BASE_SEPOLIA_MIN_BASE_FEE_WEI,
   DEFAULT_REPLACEMENT_BUMP_BPS,
+  EIP1559_PRACTICAL_MIN_BASE_FEE_WEI,
   MODEST_PRIORITY_FEE_WEI,
 } from "./constants.js";
 
@@ -54,7 +54,7 @@ export function bumpByBps(value: bigint, bumpBps: bigint): bigint {
  */
 export function underpricedFees(
   baseFee: bigint,
-  minBaseFee: bigint = BASE_SEPOLIA_MIN_BASE_FEE_WEI,
+  minBaseFee: bigint = EIP1559_PRACTICAL_MIN_BASE_FEE_WEI,
 ): GasFees {
   if (baseFee < 2n) {
     throw new Error(

@@ -1,9 +1,10 @@
 import { type Address, type Hash, type Hex } from "viem";
+import { explorerTxUrl } from "./chains.js";
 import {
-  baseClients,
   broadcastSigned,
   connectNear,
   deriveAndVerify,
+  evmClients,
   readBaseFee,
   signPayment,
   suggestPriorityFee,
@@ -72,7 +73,7 @@ async function broadcastWithFallback(
 ): Promise<{ ok: true; hash: Hash; via: string } | { ok: false; message: string; kind: string }> {
   const first = await broadcastSigned(sequencer, serialized);
   if (first.ok) {
-    return { ok: true, hash: first.hash, via: "sequencer" };
+    return { ok: true, hash: first.hash, via: "submit" };
   }
   const retryOnRpc =
     !sameEndpoint &&
@@ -82,19 +83,19 @@ async function broadcastWithFallback(
   }
   const second = await broadcastSigned(readRpc, serialized);
   if (second.ok) {
-    return { ok: true, hash: second.hash, via: "rpc-after-sequencer-reject" };
+    return { ok: true, hash: second.hash, via: "rpc-after-submit-reject" };
   }
   return {
     ok: false,
     kind: `${first.failure.kind}, then ${second.failure.kind}`,
-    message: `sequencer: ${first.failure.message} || rpc: ${second.failure.message}`,
+    message: `submit: ${first.failure.message} || rpc: ${second.failure.message}`,
   };
 }
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const signer = requireSigner(config);
-  const { readClient, sequencerClient } = baseClients(config);
+  const { readClient, sequencerClient } = evmClients(config);
   const near = await connectNear(config, signer.nearAccountId, signer.nearPrivateKey);
   const derived = await deriveAndVerify({
     contract: near.contract,
@@ -106,8 +107,10 @@ async function main(): Promise<void> {
   });
 
   const chainId = await readClient.getChainId();
-  if (chainId !== 84532) {
-    throw new Error(`RPC chain id ${chainId} is not Base Sepolia (84532)`);
+  if (chainId !== config.chain.chainId) {
+    throw new Error(
+      `RPC chain id ${chainId} is not ${config.chain.name} (${config.chain.chainId})`,
+    );
   }
 
   const [baseFee, suggestedPriority, nonce, balance, nearState] = await Promise.all([
@@ -121,6 +124,8 @@ async function main(): Promise<void> {
   let plan: PaymentPlan;
   try {
     plan = buildPaymentPlan({
+      chainId: config.chain.chainId,
+      minBaseFeeWei: config.chain.minBaseFeeWei,
       nonce,
       baseFee,
       feeCapWei: config.feeCapWei,
@@ -151,6 +156,8 @@ async function main(): Promise<void> {
     `nearBalanceYocto: ${nearBalance.toString()}`,
     `derivationPath: ${config.derivationPath}`,
     `mpcContract: ${config.mpcContractId}`,
+    `chain: ${config.chain.name}`,
+    `chainId: ${chainId}`,
     `derivedAddress: ${derived.address}`,
     `derivationMatchesContract: true`,
     `baseFee: ${formatWei(baseFee)}`,
@@ -176,8 +183,8 @@ async function main(): Promise<void> {
   if (balance < worstCase) {
     lines.push(
       "result: evm-unfunded",
-      `note: ${derived.address} has ${balance.toString()} wei. The replacement can cost up to ${worstCase.toString()} wei of L2 gas, plus Base's L1 data fee.`,
-      "note: fund that address from a Base Sepolia faucet (Coinbase CDP, Alchemy, QuickNode, or https://ethfaucet.com/networks/base/base-sepolia), wait for the drip, then rerun npm run spike.",
+      `note: ${derived.address} has ${balance.toString()} wei on ${config.chain.name}. The replacement can cost up to ${worstCase.toString()} wei of execution gas. OP-stack chains such as Base also charge an L1 data fee.`,
+      `note: fund that address on ${config.chain.name} (chain id ${config.chain.chainId}), wait for the drip, then rerun npm run spike.`,
     );
     printLines(lines);
     process.exitCode = 1;
@@ -197,7 +204,7 @@ async function main(): Promise<void> {
   lines.push(`underpriced.mpcMs: ${underpriced.mpcMs}`);
   lines.push(`underpriced.signedNonce: ${underpriced.nonce}`);
 
-  const sameEndpoint = config.baseRpcUrl === config.baseSequencerUrl;
+  const sameEndpoint = config.rpcUrl === config.submitUrl;
   const sentUnder = await broadcastWithFallback(
     sequencerClient,
     readClient,
@@ -224,27 +231,35 @@ async function main(): Promise<void> {
       from: derived.address,
       plan,
       reason:
-        "The Base endpoint rejected the underpriced transaction at ingress, so it never sat in the mempool. Fallback: sign and broadcast only the fee-bumped transaction at the same nonce.",
+        `${config.chain.name} rejected the underpriced transaction at ingress, so it never sat in the mempool. Fallback: sign and broadcast only the fee-bumped transaction at the same nonce.`,
       receiptWaitMs: config.receiptWaitMs,
+      explorerBase: config.chain.explorerTxBase,
     });
     return;
   }
 
   lines.push(`underpriced.broadcast: accepted via ${sentUnder.via}`);
   lines.push(`underpriced.hash: ${sentUnder.hash}`);
+  lines.push(`underpriced.explorer: ${explorerTxUrl(config.chain, sentUnder.hash)}`);
   if (sentUnder.hash.toLowerCase() !== underpriced.hash.toLowerCase()) {
     lines.push(`note: node hash ${sentUnder.hash} differs from local keccak ${underpriced.hash}`);
   }
 
-  console.log(`Waiting ${config.stuckWaitMs}ms to see whether the underpriced transaction stays pending.`);
+  const blockAtSend = await readClient.getBlockNumber();
+  console.log(
+    `Waiting ${config.stuckWaitMs}ms to see whether the underpriced transaction stays pending.`,
+  );
   const stuck = await observeTransaction({
     waitMs: config.stuckWaitMs,
     pollMs: config.stuckPollMs,
     lookup: () => phaseOfEither(readClient, sequencerClient, sentUnder.hash),
   });
+  const blockAfterWait = await readClient.getBlockNumber();
   lines.push(`underpriced.observation: ${stuck.phase}`);
   lines.push(`underpriced.sawPending: ${stuck.sawPending}`);
-  lines.push(`underpriced.observedMs: ${stuck.elapsedMs}`);
+  lines.push(`underpriced.pendingForMs: ${stuck.elapsedMs}`);
+  lines.push(`underpriced.fromBlock: ${blockAtSend.toString()}`);
+  lines.push(`underpriced.toBlock: ${blockAfterWait.toString()}`);
 
   if (stuck.phase === "mined") {
     lines.push("result: underpriced-mined");
@@ -311,6 +326,7 @@ async function main(): Promise<void> {
   }
   lines.push(`replacement.broadcast: accepted via ${sentReplacement.via}`);
   lines.push(`replacement.hash: ${sentReplacement.hash}`);
+  lines.push(`replacement.explorer: ${explorerTxUrl(config.chain, sentReplacement.hash)}`);
 
   const landed = await observeTransaction({
     waitMs: config.receiptWaitMs,
@@ -320,7 +336,9 @@ async function main(): Promise<void> {
   lines.push(`replacement.observation: ${landed.phase}`);
   if (landed.phase !== "mined") {
     lines.push("result: replacement-pending");
-    lines.push("note: the replacement was accepted but had no receipt before RECEIPT_WAIT_MS. Inspect the hash on https://sepolia.basescan.org.");
+    lines.push(
+      `note: the replacement was accepted but had no receipt before RECEIPT_WAIT_MS. Inspect ${explorerTxUrl(config.chain, sentReplacement.hash)}.`,
+    );
     printLines(lines);
     process.exitCode = 1;
     return;
@@ -370,6 +388,7 @@ async function landFallback(
     plan: PaymentPlan;
     reason: string;
     receiptWaitMs: number;
+    explorerBase: string;
   },
 ): Promise<void> {
   lines.push(`fallback: ${input.reason}`);
@@ -402,6 +421,7 @@ async function landFallback(
   }
   lines.push(`replacement.broadcast: accepted via ${sent.via}`);
   lines.push(`replacement.hash: ${sent.hash}`);
+  lines.push(`replacement.explorer: ${input.explorerBase}/${sent.hash}`);
   const landed = await observeTransaction({
     waitMs: input.receiptWaitMs,
     pollMs: 2_000,

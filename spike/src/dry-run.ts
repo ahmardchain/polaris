@@ -2,8 +2,8 @@ import { JsonRpcProvider } from "@near-js/providers";
 import { contracts } from "chainsig.js";
 import { getAddress } from "viem";
 import {
-  baseClients,
   deriveAndVerify,
+  evmClients,
   readBaseFee,
   suggestPriorityFee,
 } from "./chain.js";
@@ -16,7 +16,7 @@ const ILLUSTRATIVE_ACCOUNT = "example.testnet";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const { readClient } = baseClients(config);
+  const { readClient } = evmClients(config);
   const predecessor = config.nearAccountId ?? ILLUSTRATIVE_ACCOUNT;
   const provider = new JsonRpcProvider({ url: config.nearRpcUrl });
   const contract = new contracts.ChainSignatureContract({
@@ -39,8 +39,10 @@ async function main(): Promise<void> {
     readClient.getChainId(),
   ]);
 
-  if (chainId !== 84532) {
-    throw new Error(`RPC chain id ${chainId} is not Base Sepolia (84532)`);
+  if (chainId !== config.chain.chainId) {
+    throw new Error(
+      `RPC chain id ${chainId} is not ${config.chain.name} (${config.chain.chainId})`,
+    );
   }
 
   const nonce = config.nearAccountId
@@ -54,6 +56,8 @@ async function main(): Promise<void> {
     : undefined;
 
   const plan = buildPaymentPlan({
+    chainId: config.chain.chainId,
+    minBaseFeeWei: config.chain.minBaseFeeWei,
     nonce,
     baseFee,
     feeCapWei: config.feeCapWei,
@@ -74,7 +78,9 @@ async function main(): Promise<void> {
     `derivedAddress: ${derived.address}`,
     `derivationMatchesContract: true`,
     `contractDerivedKey: ${derived.contractPublicKey}`,
-    `baseSepoliaChainId: ${chainId}`,
+    `chain: ${config.chain.name}`,
+    `chainId: ${chainId}`,
+    `minBaseFeeWei: ${config.chain.minBaseFeeWei.toString()}`,
     `baseFee: ${formatWei(baseFee)}`,
     `suggestedPriorityFee: ${suggestedPriority === undefined ? "unavailable" : formatWei(suggestedPriority)}`,
     `feeCap: ${formatWei(config.feeCapWei)}`,
@@ -93,7 +99,7 @@ async function main(): Promise<void> {
     const worstCase = config.paymentWei + plan.replacement.gas * plan.replacement.maxFeePerGas;
     if (balance < worstCase) {
       lines.push(
-        `note: derived address balance is below value + gas * replacement maxFee (${worstCase.toString()} wei). Fund ${derived.address} from a Base Sepolia faucet before npm run spike. Base also charges an L1 data fee on top of that L2 max.`,
+        `note: derived address balance is below value + gas * replacement maxFee (${worstCase.toString()} wei) on ${config.chain.name}. Fund ${derived.address} on chain id ${config.chain.chainId} before npm run spike.`,
       );
     }
   }

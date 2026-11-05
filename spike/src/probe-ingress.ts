@@ -1,6 +1,5 @@
 import { createPublicClient, createWalletClient, http } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { baseSepolia } from "viem/chains";
 import { loadConfig } from "./config.js";
 import "./env.js";
 import { classifyBroadcastError } from "./errors.js";
@@ -9,7 +8,7 @@ import { formatWei, printLines } from "./report.js";
 
 /**
  * Live check that does not need a funded account.
- * A zero-balance key asks Base Sepolia to accept an underpriced EIP-1559
+ * A zero-balance key asks the selected chain to accept an underpriced EIP-1559
  * transaction and an includable one. The error text shows whether the node
  * rejects low maxFeePerGas before it rejects an empty balance.
  */
@@ -17,15 +16,15 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const account = privateKeyToAccount(generatePrivateKey());
   const readClient = createPublicClient({
-    chain: baseSepolia,
-    transport: http(config.baseRpcUrl),
+    chain: config.chain.viemChain,
+    transport: http(config.rpcUrl),
   });
   const block = await readClient.getBlock();
   const baseFee = block.baseFeePerGas;
   if (baseFee == null) {
-    throw new Error("Base Sepolia block has no baseFeePerGas");
+    throw new Error("Latest block has no baseFeePerGas");
   }
-  const low = underpricedFees(baseFee);
+  const low = underpricedFees(baseFee, config.chain.minBaseFeeWei);
   const high = replacementFees({
     baseFee,
     stuck: low,
@@ -33,21 +32,26 @@ async function main(): Promise<void> {
   });
   const lines = [
     "Polaris ingress probe (unfunded throwaway key, nothing is signed by NEAR)",
+    `chain: ${config.chain.name}`,
+    `chainId: ${config.chain.chainId}`,
     `throwaway: ${account.address}`,
     `baseFee: ${formatWei(baseFee)}`,
     `underpriced.maxFeePerGas: ${formatWei(low.maxFeePerGas)}`,
     `includable.maxFeePerGas: ${formatWei(high.maxFeePerGas)}`,
   ];
 
-  const endpoints = [
-    ["sequencer", config.baseSequencerUrl],
-    ["rpc", config.baseRpcUrl],
-  ] as const;
+  const endpoints =
+    config.submitUrl === config.rpcUrl
+      ? ([["rpc", config.rpcUrl]] as const)
+      : ([
+          ["submit", config.submitUrl],
+          ["rpc", config.rpcUrl],
+        ] as const);
 
   for (const [label, url] of endpoints) {
     const wallet = createWalletClient({
       account,
-      chain: baseSepolia,
+      chain: config.chain.viemChain,
       transport: http(url),
     });
     for (const [name, fees] of [

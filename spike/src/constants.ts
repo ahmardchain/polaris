@@ -9,6 +9,15 @@ export const BASE_SEPOLIA_CHAIN_ID = 84532;
  */
 export const BASE_SEPOLIA_MIN_BASE_FEE_WEI = 5_000_000n;
 
+/**
+ * EIP-1559 changes the base fee by parentBaseFee/8. Once the parent is below
+ * 8 wei that delta truncates to 0, so the base fee cannot fall below 7 wei.
+ * A max fee under 7 wei cannot be included on Ethereum.
+ */
+export const EIP1559_PRACTICAL_MIN_BASE_FEE_WEI = 7n;
+
+export const ETHEREUM_SEPOLIA_CHAIN_ID = 11_155_111;
+
 /** 10% — the minimum bump Base documents for a same-nonce replacement. */
 export const DEFAULT_REPLACEMENT_BUMP_BPS = 1_000n;
 

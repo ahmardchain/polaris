@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   BASE_SEPOLIA_MIN_BASE_FEE_WEI,
   DEFAULT_FEE_CAP_WEI,
+  EIP1559_PRACTICAL_MIN_BASE_FEE_WEI,
 } from "./constants.js";
 import {
   FeeCapExceededError,
@@ -14,7 +15,10 @@ import {
 
 describe("underpricedFees", () => {
   it("stays below the live base fee and the Base Sepolia floor", () => {
-    const fees = underpricedFees(BASE_SEPOLIA_MIN_BASE_FEE_WEI);
+    const fees = underpricedFees(
+      BASE_SEPOLIA_MIN_BASE_FEE_WEI,
+      BASE_SEPOLIA_MIN_BASE_FEE_WEI,
+    );
     assert.equal(fees.maxFeePerGas, BASE_SEPOLIA_MIN_BASE_FEE_WEI / 2n);
     assert.equal(fees.maxPriorityFeePerGas, 1n);
     assert.ok(fees.maxFeePerGas < BASE_SEPOLIA_MIN_BASE_FEE_WEI);
@@ -23,10 +27,18 @@ describe("underpricedFees", () => {
 
   it("stays under the floor when the live base fee is higher", () => {
     const baseFee = 50_000_000n;
-    const fees = underpricedFees(baseFee);
+    const fees = underpricedFees(baseFee, BASE_SEPOLIA_MIN_BASE_FEE_WEI);
     assert.equal(fees.maxFeePerGas, BASE_SEPOLIA_MIN_BASE_FEE_WEI / 2n);
     assert.ok(fees.maxFeePerGas < baseFee);
     assert.ok(fees.maxFeePerGas < BASE_SEPOLIA_MIN_BASE_FEE_WEI);
+  });
+
+  it("stays under Ethereum's 7 wei practical floor when the live base fee is only a few wei", () => {
+    const fees = underpricedFees(17n, EIP1559_PRACTICAL_MIN_BASE_FEE_WEI);
+    assert.equal(fees.maxFeePerGas, 3n);
+    assert.equal(fees.maxPriorityFeePerGas, 1n);
+    assert.ok(fees.maxFeePerGas < 17n);
+    assert.ok(fees.maxFeePerGas < EIP1559_PRACTICAL_MIN_BASE_FEE_WEI);
   });
 
   it("uses half the live base fee when that is already under the floor", () => {
@@ -38,7 +50,7 @@ describe("underpricedFees", () => {
 
 describe("replacementFees", () => {
   const baseFee = 5_000_000n;
-  const stuck = underpricedFees(baseFee);
+  const stuck = underpricedFees(baseFee, BASE_SEPOLIA_MIN_BASE_FEE_WEI);
 
   it("bumps both fields by at least 10% and clears twice the base fee", () => {
     const next = replacementFees({
