@@ -1,0 +1,8 @@
+.env
+.env.local
+node_modules
+spike/dist/
+web/dist/
+contract/target/
+*.log
+.DS_Store

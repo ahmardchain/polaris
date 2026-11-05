@@ -1,0 +1,31 @@
+{
+  "name": "polaris-checker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Checker service: buy a Polaris guarantee, send the Sepolia payment via Chain Signatures, fee-bump if stuck, and submit proof only if it mines before the deadline.",
+  "scripts": {
+    "test": "node --import tsx --test src/*.test.ts",
+    "fund-pool": "tsx src/fund-pool.ts",
+    "demo": "tsx src/demo.ts",
+    "set-checker": "tsx src/set-checker.ts",
+    "quote": "tsx src/quote.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@near-js/accounts": "^2.5.1",
+    "@near-js/crypto": "^2.5.1",
+    "@near-js/providers": "^2.5.1",
+    "@near-js/signers": "^2.5.1",
+    "@near-js/utils": "^2.5.1",
+    "dotenv": "^18.0.9"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}
