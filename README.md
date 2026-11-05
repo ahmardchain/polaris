@@ -2,6 +2,30 @@
 
 Polaris sends an AI agent's cross-chain payment via NEAR Chain Signatures with an on-time guarantee. A NEAR contract pays out by default at the deadline unless Polaris submits delivery proof. Polaris bumps fees on its own stuck transactions to protect its pool.
 
+Other entry by same author: TBD
+
+## Guarantee contract
+
+`contract/` is a Rust contract (`near-sdk` 5.30) for the guarantee itself.
+
+An agent calls `buy_guarantee` and attaches the flat premium in NEAR. The call records the destination chain, the recipient, the destination payment amount (in that chain's units, such as wei), the NEAR `coverage` the pool will pay if delivery is not proved, and a deadline. The premium is NEAR for this version. Charging USDC is a later change.
+
+The pool is the contract's NEAR reserved for payouts. `fund_pool` adds capital. A purchase is refused when outstanding coverage plus the new coverage would exceed the pool balance after the premium is added. On delivery, the coverage is released and the premium stays in the pool. After the deadline, anyone can call `claim` and the agent is paid `coverage` from the pool. A second claim is rejected. A proof submitted at or after the deadline is rejected.
+
+The owner sets `checker`, the only account that can call `submit_proof` with the destination transaction hash. That checker is a normal NEAR account the owner can replace. It is trusted. It is not a TEE, and the contract does not verify the destination transaction itself.
+
+Deployed on NEAR testnet as `guarantee.polaris-d1-z7npttup.testnet`. The owner and the checker are both `polaris-d1-z7npttup.testnet`. The flat premium is 0.1 NEAR. The pool balance is 0 until someone calls `fund_pool`, so a purchase with coverage above that premium is refused until the pool is capitalized. The deploy transaction was `6369XPUeWCmrkLWCWYCBm74h58v3tzLDBXuVBytHZnrS`.
+
+```bash
+cd contract
+cargo test
+./scripts/deploy-testnet.sh
+```
+
+`scripts/deploy-testnet.sh` builds the wasm and deploys with the NEAR account in `spike/.env`. It does not print the key. `CONTRACT_ACCOUNT`, `CHECKER_ACCOUNT`, and `PREMIUM_YOCTO` override the defaults.
+
+Unit tests cover delivery (premium stays, coverage released), a timeout claim, a late proof, a purchase over the pool cap, a second claim, a proof from the wrong account, a claim before the deadline, and an owner-only checker change. `cargo test`: 10 passed.
+
 ## Day-1 spike
 
 `spike/` is the day-1 risk check. It derives an EVM address from a NEAR testnet account, broadcasts an intentionally underpriced EIP-1559 payment, watches whether that payment stays pending, then replaces it at the same nonce with a higher fee that stays under a configurable cap.
@@ -136,6 +160,10 @@ With the Base base fee at its 0.005 gwei floor (`5000000` wei), the same script 
 | Replacement | `11000000` wei when the suggested tip is `1000000` wei | `1000000` wei |
 
 Both are EIP-1559 on chain id `84532`, same nonce, under the same 1 gwei cap. A dry run on 5 Nov 2026 confirmed that plan and the derivation, with a zero Base balance. An unfunded probe of `https://sepolia.base.org` and `https://sepolia-sequencer.base.org` returned `insufficient funds` (`want 52500000000` for the underpriced fee, which is `21000 * 2500000`) rather than `max fee per gas less than block base fee`. A funded Base broadcast has not been run.
+
+### Next steps
+
+The checker is still a key the owner holds. The next piece is a checker service: watch the Ethereum Sepolia payment from the day-1 spike, and if the replacement lands before the deadline, call `submit_proof` on `guarantee.polaris-d1-z7npttup.testnet` with that transaction hash. If it does not land, leave the guarantee open so `claim` pays the agent from the pool. The pool has to be funded with `fund_pool` before a guarantee whose coverage is larger than the premium can be sold.
 
 ### What this run did and did not show
 

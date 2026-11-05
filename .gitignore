@@ -2,5 +2,6 @@
 .env.local
 spike/node_modules/
 spike/dist/
+contract/target/
 *.log
 .DS_Store
