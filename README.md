@@ -161,10 +161,6 @@ With the Base base fee at its 0.005 gwei floor (`5000000` wei), the same script 
 
 Both are EIP-1559 on chain id `84532`, same nonce, under the same 1 gwei cap. A dry run on 5 Nov 2026 confirmed that plan and the derivation, with a zero Base balance. An unfunded probe of `https://sepolia.base.org` and `https://sepolia-sequencer.base.org` returned `insufficient funds` (`want 52500000000` for the underpriced fee, which is `21000 * 2500000`) rather than `max fee per gas less than block base fee`. A funded Base broadcast has not been run.
 
-### Next steps
-
-The checker is still a key the owner holds. The next piece is a checker service: watch the Ethereum Sepolia payment from the day-1 spike, and if the replacement lands before the deadline, call `submit_proof` on `guarantee.polaris-d1-z7npttup.testnet` with that transaction hash. If it does not land, leave the guarantee open so `claim` pays the agent from the pool. The pool has to be funded with `fund_pool` before a guarantee whose coverage is larger than the premium can be sold.
-
 ### What this run did and did not show
 
 Showed live:
@@ -179,3 +175,52 @@ Did not show:
 - The same flow on Base Sepolia with a funded address. Base support remains in `EVM_CHAIN=base-sepolia`.
 - A case where the node rejects the underpriced transaction at ingress. If that happens, the script signs one includable transaction at the same nonce and prints `result: fallback-ingress-rejected`. That is a broadcast of the bumped fee, not a replacement of a transaction that was sitting in the pool.
 - A case where the fee required to get included exceeds `FEE_CAP_WEI`. The script then prints `result: fee-cap` and does not sign.
+
+## Checker service
+
+`checker/` buys a guarantee, sends the Sepolia payment with the spike's Chain Signatures path, and decides what to do next.
+
+It signs an underpriced EIP-1559 transaction. If that transaction is still pending after the stuck window, and a same-nonce replacement fits under `FEE_CAP_WEI` and can still be signed and confirmed before the deadline, it fee-bumps. Once the landed transaction has the required confirmations and the deadline has not passed, it calls `submit_proof` with that hash. If it cannot land in time, it does not submit proof, so `claim` can refund the agent after the deadline. The checker account is still the trusted owner key. It is not a TEE.
+
+```bash
+cd checker
+npm install
+npm test
+npm run fund-pool
+npm run demo          # scenario A, then scenario B
+```
+
+`npm test`: 12 passed. The tests mock NEAR and Sepolia and cover the fee bump, the fee cap, a deadline that is too soon to rescue, and a claim that does not run after proof.
+
+The pool was funded with `0.001` NEAR in `DRo6MS2L5Hf1k1rQYgbCRv3deNBFVBiG6HzonHk71EHu`. Each guarantee pays the contract's flat premium of 0.1 NEAR and covers `0.0002` NEAR (`200000000000000000000` yocto). The destination payment recorded on the guarantee is 1 wei.
+
+### Scenario A, stuck payment rescued
+
+Guarantee 3. The underpriced transaction (nonce 3, `maxFeePerGas` 3 wei) was seen pending for 28.4 seconds. The replacement at the same nonce mined in block `12067942` with 2 confirmations. `submit_proof` stored that hash. The underpriced hash was then dropped.
+
+| Step | Hash |
+| --- | --- |
+| Buy | [`4dCwev8mrQaZtV5q1Pz5wTjFPsryxf17r8Rm2Z2LUo3E`](https://testnet.nearblocks.io/txns/4dCwev8mrQaZtV5q1Pz5wTjFPsryxf17r8Rm2Z2LUo3E) |
+| Underpriced, pending 28449 ms, MPC 26792 ms | [`0x2e73d90c…4085b`](https://sepolia.etherscan.io/tx/0x2e73d90c91a00fecf935a78f04b92164ba36591e1db04617c01a6d210774085b) |
+| Replacement, nonce 3, MPC 16210 ms, success | [`0x4546eed3…5ba9e`](https://sepolia.etherscan.io/tx/0x4546eed3b02239a3bea9646ea3ddf59b8b82787d726effe92662c8bd67e5ba9e) |
+| Proof | [`4m8SUbbX7dW2mbBpUyzGYsrGxNNDN568CQoHRaJC1mfZ`](https://testnet.nearblocks.io/txns/4m8SUbbX7dW2mbBpUyzGYsrGxNNDN568CQoHRaJC1mfZ) |
+
+Guarantee 3 is `Delivered`. Its proof hash is the replacement. An earlier pass, guarantee 1, proved [`0xa0a9e2d4…5ba9e`](https://sepolia.etherscan.io/tx/0xa0a9e2d4867534d576fc599674df1b840a9f8a0cb1219f193eac5316892e2548) only after PublicNode rejected the underpriced broadcast, so that pass did not show a transaction sitting pending. Guarantee 3 is the stuck-then-rescue run.
+
+### Scenario B, deadline passes and claim pays
+
+Guarantee 4. The underpriced transaction (nonce 4, `maxFeePerGas` 3 wei) stayed pending for 84.1 seconds. A bump would not have confirmed before the deadline, so no proof was submitted. After the deadline, `claim` paid the 0.0002 NEAR coverage to `polaris-d1-z7npttup.testnet`. Status is `Claimed` and `proof_tx_hash` is null.
+
+| Step | Hash |
+| --- | --- |
+| Buy | [`GF3AVqCDHHYhrVjnoD6Ewq5AuMwEKeHZiDAxwPPnQcLM`](https://testnet.nearblocks.io/txns/GF3AVqCDHHYhrVjnoD6Ewq5AuMwEKeHZiDAxwPPnQcLM) |
+| Underpriced, pending 84141 ms, MPC 15605 ms, not proved | [`0x03cc5ec7…ac2d9`](https://sepolia.etherscan.io/tx/0x03cc5ec7c877007e020e507ad838bd76f704538d87ff5d983aa6d783265ac2d9) |
+| Claim | [`5onvRo1TirhoLTW9NY9adyyGqXxxMame9QdkMkSoEcfi`](https://testnet.nearblocks.io/txns/5onvRo1TirhoLTW9NY9adyyGqXxxMame9QdkMkSoEcfi) |
+
+The underpriced nonce was still open after the claim, which would block later payments. The demo then broadcast a same-nonce transfer, [`0xbee7cb84…908ab`](https://sepolia.etherscan.io/tx/0xbee7cb84d992c61e5379dd60dad9ab488e35f0c9b385774cc45b201a093908ab), mined in block `12067963`. That was only to free the account. `submit_proof` was not called, and the guarantee stayed `Claimed`.
+
+PublicNode sometimes answers the first underpriced broadcast with `transaction underpriced` and accepts a retry. The sender retries the same signed transaction, and signs once more if the retries are still rejected.
+
+## What is left
+
+A frontend and a demo video are not in this repo. The payout is NEAR from the pool. A NEAR Intents payout, and USDC premiums, are not implemented. The checker is still the owner's key, not a separate service account or a TEE.
